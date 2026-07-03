@@ -331,7 +331,7 @@ girafe(
 )
 ```
 
-####### Histogram For Income 
+####### Histogram For Income
 
 ```{r}
 ggplot(data = income_data, aes(x = estimate)) +
@@ -371,20 +371,23 @@ combined <- hc |>
 scatter <- ggplot(data = combined, aes(x = median_age, y = median_income)) +
   geom_point_interactive(
     aes(tooltip = paste0("Tract: ", NAME, "\nMedian Age: ", median_age, "\nMedian Income: $", median_income)),
-    color = "black", fill = "#FF9999", shape = 21, size = 2
+    color = "black", fill = "red", shape = 21, size = 2
   ) +
   theme_minimal() +
   labs(
     title = "Median Age vs. Median Household Income by Census Tract",
-    subtitle = "Hawaii County, HI",
+    subtitle = "Hawaii County Census Tract",
     x = "Median Age",
     y = "Median Household Income ($)"
   )
 
 girafe(
   ggobj = scatter,
+  width_svg = 8,
+  height_svg = 6,
   options = list(
-    opts_zoom(min = 1, max = 5)
+    opts_zoom(min = 1, max = 5),
+    opts_sizing(rescale = TRUE)
   )
 )
 ```
@@ -392,7 +395,63 @@ girafe(
 #### Challenge 2
 
 ```{r}
+hi_age_income <- get_acs(
+  geography = "tract",
+  variables = c(
+    median_age = "B01002_001",
+    median_income = "B19013_001"
+  ),
+  state = "HI",
+  year = 2024,
+  geometry = TRUE,
+  output = "wide"
+)|>
+  dplyr::filter(GEOID != "15003981200") 
+```
+```{r}
+names(hi_age_income) <- sub("E$", "", names(hi_age_income))
 
+hi_age_income$popup <- glue::glue(
+  "<strong>GEOID: </strong>{hi_age_income$GEOID}<br>",
+  "<strong>Median age: </strong>{round(hi_age_income$median_age, 1)}<br>",
+  "<strong>Median household income: </strong>${format(round(hi_age_income$median_income), big.mark = ',')}"
+)
+
+age_income_scale <- bivariate_scale(
+  data = hi_age_income,
+  x = "median_income",
+  y = "median_age", na_color = "white", palette = "blue_red"
+)
+
+maplibre(
+  style = carto_style("positron"),
+  bounds = hi_age_income
+) |>
+  add_fill_layer(
+    id = "hi_age_income",
+    source = hi_age_income,
+    fill_color = age_income_scale$expression,
+    fill_opacity = 0.75,
+    fill_outline_color = "rgba(255,255,255,0.25)",
+    popup = "popup",
+    hover_options = list(
+      fill_opacity = 1
+    )
+  ) |>
+  add_bivariate_legend(
+    age_income_scale,
+    legend_title = "Age and income",
+    x_title = "Higher income",
+    y_title = "Older median age",
+    layer_id = "hi_age_income",
+    style = legend_style(
+      background_color = "white",
+      background_opacity = 0.94,
+      border_color = "#d1d5db",
+      border_width = 1,
+      shadow = TRUE
+    )
+  )
 ```
 
 [Follow this guide](https://walker-data.com/mapgl/articles/map-design.html#bivariate-styling:~:text=80-,Bivariate%20styling,-Bivariate%20maps%20visualize) to make a bivariate map of median age and income for your chosen county
