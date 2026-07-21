@@ -1,0 +1,230 @@
+---
+title: "🗺️ Interactive Mapping with mapgl and Shiny"
+author: "DS421 – Cartographic Design"
+format:
+  html:
+    code-fold: true
+    toc: true
+    theme: cosmo
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## 1️⃣ Census Shiny App
+
+#### Load Libraries
+
+```{r}
+library(shiny)
+library(tidyverse)
+library(sf)
+library(mapgl)
+library(lubridate)
+library(bslib)
+library(here)
+library(tidycensus)
+library(ggpubr)
+library(plotly)
+library(mapview)
+library(leaflet)
+```
+
+#### View Census Variables
+
+```{r}
+acs_vars <- load_variables(year = 2023, dataset = "acs5", cache = TRUE)
+```
+
+#### Transform Data
+
+```{r}
+# Define raw ACS variable codes
+raw_vars <- c(
+  median_income = "B19013_001",
+  bachelors_count = "B15003_022",  # Count, not percent
+  median_gross_rent = "B25064_001",
+  total_population = "B01003_001"
+)
+
+# Labels for Shiny dropdown (key = column name in wide data)
+variable_choices <- c(
+  "Median Household Income" = "median_income",
+  "Percent with Bachelor's Degree" = "pct_bachelors",
+  "Median Gross Rent" = "median_gross_rent"
+)
+
+# Pull and transform ACS data
+hawaii_data_raw <- get_acs(
+  geography = "tract",
+  state = "HI",
+  variables = raw_vars,
+  geometry = TRUE,
+  year = 2023
+) |>
+  filter(GEOID != "15003981200") |>  # Remove Kalawao County
+  st_transform(4326)
+
+# Convert to wide format + calculate % with bachelor's
+hawaii_data <- hawaii_data_raw |>
+  select(GEOID, NAME, variable, estimate, geometry) |>
+  st_drop_geometry() |>   # temp drop for pivot
+  pivot_wider(names_from = variable, values_from = estimate) |>
+  mutate(
+    pct_bachelors = 100 * bachelors_count / total_population
+  ) |>
+  left_join(
+    hawaii_data_raw |> select(GEOID, geometry) |> distinct(),
+    by = "GEOID"
+  ) |>
+  st_as_sf()
+```
+
+## 🧩 Challenge 1
+
+Can you make a histogram of median rent colored by county. Hint: You will have to make a new column called county based on the values in the NAME column
+
+```{r}
+hawaii_data <- hawaii_data |>
+  mutate(county = str_trim(str_split_fixed(NAME, ",", 3)[, 2]))
+```
+
+```{r}
+ggplot(hawaii_data, aes(x = median_gross_rent, fill = county)) +
+  geom_histogram(bins = 30, color = "white", alpha = 0.85) +
+  labs(
+    title = "Distribution of Median Gross Rent by County",
+    x = "Median Gross Rent ($)",
+    y = "Number of Census Tracts",
+    fill = "County"
+  ) +
+  theme_minimal()
+```
+
+## 🧩 Challenge 2
+
+A. Can you make a scatterplot showing the relationship between median income and median gross rent. Can you use the `stat_cor()`function to show a correlation coefficient and p value
+
+```{r}
+rent_income_plot <- ggplot(hawaii_data, aes(x = median_income, y = median_gross_rent)) +
+  geom_point(alpha = 0.6, color = "steelblue") +
+  geom_smooth(method = "lm", se = TRUE, color = "darkred") +
+  stat_cor(method = "pearson", label.x.npc = "left", label.y.npc = "top") +
+  labs(
+    title = "Median Household Income vs. Median Gross Rent",
+    subtitle = "Hawaii census tracts, ACS 2023 5-year estimates",
+    x = "Median Household Income ($)",
+    y = "Median Gross Rent ($)"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+rent_income_plot
+```
+
+B. Can you make this scatterplot interactive with `ggplotly()`
+
+```{r}
+ggplotly(rent_income_plot)
+```
+
+## 🧩 Challenge 3
+
+Can you make a choropleth map of Hawaii using `mapview()` that shows median rent by census tract
+
+```{r}
+mapview(
+  hawaii_data,
+  zcol = "median_gross_rent",
+  layer.name = "Median Gross Rent ($)"
+)
+```
+
+#### Building a Shiny App
+
+We have these 3 variables in hawaii_data, it would be nice if users can select a variable from a dropdown: [Introducing Shiny](https://shiny.posit.co/)
+
+There are many mapping packages we can use with Shiny. The simplest for now is `mapview`. It is good to note that the mapgl package is also designed specifically to [work with advanced shiny apps](https://walker-data.com/mapgl/articles/shiny.html).
+
+```{r}
+
+ui <- fluidPage(
+  titlePanel("Hawaii Census Map"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("var", "Choose a variable to map:", choices = variable_choices)
+    ),
+    mainPanel(
+      leafletOutput("map", height = "700px")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  output$map <- renderLeaflet({
+    mapview(
+      hawaii_data,
+      zcol = input$var,
+      layer.name = names(variable_choices)[variable_choices == input$var]
+    )@map
+  })
+}
+
+shinyApp(ui, server)
+```
+
+## 🧩 Challenge 4
+
+Can you create a shiny app using your LANDSAT_USA_contiguous_and_Hawaii_7d.csv in the data folder that allows users to filter the map by confidence. For example, the user can select from a side dropdown to only show *high* confidence fires, *medium* confidence fires, or *low* confidence fires. AI Bonus: Add a date slider so users can toggle the map by date. Can you add a heatmap layer users can toggle on and off?
+
+```         
+```
+
+```{r}
+hi_landsat <- st_read(here("data", "LANDSAT_USA_contiguous_and_Hawaii_7d", "LANDSAT_USA_contiguous_and_Hawaii_7d.shp"))
+```
+
+```{r}
+landsat_choices <- c("All", sort(unique(hi_landsat$CONFIDENCE)))
+
+hi_land <- fluidPage(
+  titlePanel("LANDSAT Map by Confidence"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("var", "Choose a confidence level to map:", choices = landsat_choices)
+    ),
+    mainPanel(
+      leafletOutput("map", height = "700px")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  output$map <- renderLeaflet({
+    fires <- hi_landsat
+    if (input$var != "All") {
+      fires <- fires |> filter(CONFIDENCE == input$var)
+    }
+    
+    mapview(
+      fires,
+      zcol = "CONFIDENCE",
+      layer.name = "Fire Confidence"
+    )@map
+  })
+}
+
+shinyApp(hi_land, server)
+```
+
+## 🧩 Challenge 5
+
+Can you add the functionality to your census shiny app (new panel) that allows users to pick two census variables to plot on an interactive scatter plot using `ggplotly()` and `stat_cor()`
+
+We should remain careful about our use/potential dependence on AI for coding but for cases like these where we have built all the individual parts, AI can be really helpful in putting them together in a sleek design on a shiny app.
+
+```{r}
+
+```
